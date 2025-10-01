@@ -30,10 +30,10 @@ A custom Lovelace card for Home Assistant that displays Docker container updates
 3. Click the 3-dot menu in the top right corner
 4. Click "Custom repositories"
 5. Add this repository URL: `https://github.com/angryvoegi/wud-card`
-6. Select category: "Lovelace"
+6. Select category: "Dashboard"
 7. Click "Add"
-8. Find "Docker Updates Card" in the list and click "Install"
-9. Restart Home Assistant
+8. Find "What\'s Up Docker Card" in the list and click "Install"
+9. Refresh the frontend
 
 ### Manual Installation
 
