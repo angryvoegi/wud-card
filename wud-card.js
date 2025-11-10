@@ -75,7 +75,8 @@ class WudCard extends HTMLElement {
       wud_api: config.wud_api ? {
         url: config.wud_api.url,
         auth: config.wud_api.auth || null,
-        show_update_buttons: config.wud_api.show_update_buttons !== false
+        show_update_buttons: config.wud_api.show_update_buttons !== false,
+        trigger_filter: config.wud_api.trigger_filter || 'all'
       } : null,
       release_notes: config.release_notes || {},
       custom_icons: config.custom_icons || {},
@@ -319,7 +320,23 @@ class WudCard extends HTMLElement {
     }
 
     const triggers = this.containerTriggers.get(containerId);
-    return triggers.map(t => ({ id: t.id, name: t.name, type: t.type }));
+    const allTriggers = triggers.map(t => ({ id: t.id, name: t.name, type: t.type }));
+
+    // Apply trigger filter
+    const filter = this.config.wud_api?.trigger_filter;
+
+    if (!filter || filter === 'all') {
+      return allTriggers;
+    }
+
+    // Filter by trigger type(s)
+    const filterTypes = Array.isArray(filter) ? filter : [filter];
+    return allTriggers.filter(t =>
+      filterTypes.some(ft =>
+        t.type.toLowerCase() === ft.toLowerCase() ||
+        t.name.toLowerCase() === ft.toLowerCase()
+      )
+    );
   }
 
   async triggerUpdate(entityId, triggerId) {
@@ -894,7 +911,8 @@ class WudCard extends HTMLElement {
       wud_api: {
         url: 'http://your-wud-instance:3000',
         show_update_buttons: true,
-        auth: null
+        auth: null,
+        trigger_filter: 'all'
       },
       release_notes: {},
       custom_icons: {}
