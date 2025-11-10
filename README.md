@@ -74,6 +74,7 @@ wud_api:
   url: http://your-wud-instance:3000
   show_update_buttons: true
   auth: your_bearer_token_here
+  trigger_filter: all
 release_notes:
   home-assistant: https://github.com/home-assistant/core/releases/tag/{latest}
   traefik: https://github.com/traefik/traefik/releases/tag/v{latest}
@@ -98,6 +99,7 @@ Only set the auth bearer token if you need to authenticate with WUD.
 | `wud_api.url`                 | string          | -                                      | URL of your WUD instance                                    |
 | `wud_api.show_update_buttons` | boolean         | `true`                                 | Show update buttons                                         |
 | `wud_api.auth`                | string          | -                                      | Bearer token for WUD API authentication                     |
+| `wud_api.trigger_filter`      | string          | `all`                                  | Filter your triggers, e.g. `dockercompose`, `mqtt` etc.     |
 | `release_notes`               | object          | `{}`                                   | Template URLs for release notes (see below)                 |
 | `custom_icons`                | object          | `{}`                                   | Custom MDI icons per container name                         |
 
