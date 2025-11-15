@@ -267,11 +267,17 @@ class WudCard extends HTMLElement {
 
   getContainerIdFromEntity(entityId) {
     const clean = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const entityClean = clean(entityId);
+
+    // Entferne den Präfix ZUERST
+    const entityName = entityId
+      .replace(/^update\.(whats_up_docker_container_|wud_container_)local_/, '');
+    const entityClean = clean(entityName);
 
     for (const [id, container] of this.wudContainers) {
       const containerClean = clean(container.name);
-      if (entityClean.includes(containerClean) || containerClean.includes(entityClean)) {
+      if (entityClean === containerClean ||
+          entityClean.includes(containerClean) ||
+          containerClean.includes(entityClean)) {
         return id;
       }
     }
