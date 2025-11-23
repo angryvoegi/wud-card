@@ -67,7 +67,7 @@ class WudCard extends HTMLElement {
     }
 
     this.config = {
-      title: config.title || null, // null = use translated default
+      title: config.title || null,
       entity_filter: config.entity_filter || ['whats_up_docker', 'wud_container'],
       show_current: config.show_current !== false,
       show_available_updates: config.show_available_updates !== false,
@@ -80,7 +80,7 @@ class WudCard extends HTMLElement {
       } : null,
       release_notes: config.release_notes || {},
       custom_icons: config.custom_icons || {},
-      update_interval: config.update_interval || 30000, // 30 seconds default
+      update_interval: config.update_interval || 30000,
       ...config
     };
 
@@ -268,7 +268,7 @@ class WudCard extends HTMLElement {
   getContainerIdFromEntity(entityId) {
     const clean = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    // Entferne den Präfix ZUERST
+    // Entferne den Präfix ZUERST, bevor wir matchen
     const entityName = entityId
       .replace(/^update\.(whats_up_docker_container_|wud_container_)local_/, '');
     const entityClean = clean(entityName);
@@ -291,9 +291,7 @@ class WudCard extends HTMLElement {
     }
 
     return entityId
-      .replace(/^update\.(whats_up_docker_container_|wud_container_|)/, '')
-      .replace(/^local_/, '')
-      .replace(/_\d+$/, '')
+      .replace(/^update\.(whats_up_docker_container_|wud_container_)local_/, '')
       .replace(/_/g, ' ')
       .split(' ')
       .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
@@ -301,7 +299,6 @@ class WudCard extends HTMLElement {
   }
 
   getContainerIcon(name) {
-    // Check custom icons first
     const lowerName = name.toLowerCase();
     for (const [key, icon] of Object.entries(this.config.custom_icons)) {
       if (lowerName.includes(key.toLowerCase())) return icon;
@@ -367,23 +364,6 @@ class WudCard extends HTMLElement {
     try {
       this.showNotification(`${this.t('update_started')} ${this.getContainerName(entityId)}...`, 'info');
 
-      const payload = {
-        id: container.id,
-        name: container.name,
-        watcher: container.watcher || 'docker.local',
-        image: container.image || { name: container.name },
-        registry: container.registry || { name: 'hub.public' },
-        architecture: container.architecture || 'amd64',
-        os: container.os || 'linux',
-        tag: container.tag || 'latest',
-        updateKind: container.updateKind || {
-          kind: "tag",
-          semverDiff: "patch",
-          localValue: container.tag || "current",
-          remoteValue: "latest"
-        }
-      };
-
       const response = await fetch(
         `${this.config.wud_api.url}/api/triggers/${encodeURIComponent(trigger.type)}/${encodeURIComponent(trigger.name)}`,
         {
@@ -392,7 +372,7 @@ class WudCard extends HTMLElement {
             'Content-Type': 'application/json',
             ...(this.config.wud_api.auth ? { 'Authorization': `Bearer ${this.config.wud_api.auth}` } : {})
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(container)  // Sende den kompletten Container
         }
       );
 
