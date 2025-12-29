@@ -75,12 +75,15 @@ class WudCard extends HTMLElement {
       wud_api: config.wud_api ? {
         url: config.wud_api.url,
         auth: config.wud_api.auth || null,
+        user: config.wud_api.user || null,
+        password: config.wud_api.password || null,
         show_update_buttons: config.wud_api.show_update_buttons !== false,
         trigger_filter: config.wud_api.trigger_filter || 'all'
       } : null,
       release_notes: config.release_notes || {},
       custom_icons: config.custom_icons || {},
       update_interval: config.update_interval || 30000,
+      prefixes: config.prefixes || ['local'],
       ...config
     };
 
@@ -227,13 +230,36 @@ class WudCard extends HTMLElement {
     }
   }
 
+_getAuthHeaders() {
+
+ // manage Bearer auth
+   if (this.config.wud_api.auth) {
+	return { 'Authorization': `Bearer ${this.config.wud_api.auth}` }
+   };
+
+
+ // manage base auth
+  const { user, password } = this.config.wud_api;
+
+  if (user && password) {
+    const token = btoa(`${user}:${password}`);
+    const header = {
+      "Authorization": `Basic ${token}`
+    };
+
+    return header;
+  }
+
+  return {};
+}
+
   async fetchApi(path) {
     if (!this.config.wud_api?.url) {
       throw new Error('WUD API URL not configured');
     }
 
     const response = await fetch(`${this.config.wud_api.url}${path}`, {
-      headers: this.config.wud_api.auth ? { 'Authorization': `Bearer ${this.config.wud_api.auth}` } : {}
+      headers: this._getAuthHeaders()
     });
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -246,7 +272,7 @@ class WudCard extends HTMLElement {
 
       const response = await fetch(`${this.config.wud_api.url}/api/containers/watch`, {
         method: 'POST',
-        headers: this.config.wud_api.auth ? { 'Authorization': `Bearer ${this.config.wud_api.auth}` } : {}
+      headers: this._getAuthHeaders()
       });
 
       if (response.ok) {
@@ -265,17 +291,27 @@ class WudCard extends HTMLElement {
     }
   }
 
+
   getContainerIdFromEntity(entityId) {
     const clean = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+
     // Entferne den Präfix ZUERST, bevor wir matchen
-    const entityName = entityId
-      .replace(/^update\.(whats_up_docker_container_|wud_container_)local_/, '');
+const prefixes = this.config.prefixes
+  .map(p => `${p}_`) // underscore aggiunto qui
+  .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); // escape regex
+
+const prefixRegex = new RegExp(
+  `^update\\.(whats_up_docker_container_|wud_container_)(${prefixes.join('|')})`
+);
+
+const entityName = entityId.replace(prefixRegex, '');
+
     const entityClean = clean(entityName);
 
     for (const [id, container] of this.wudContainers) {
       const containerClean = clean(container.name);
-      if (entityClean === containerClean ||
+    if (entityClean === containerClean ||
           entityClean.includes(containerClean) ||
           containerClean.includes(entityClean)) {
         return id;
@@ -288,10 +324,18 @@ class WudCard extends HTMLElement {
     const containerId = this.getContainerIdFromEntity(entityId);
     if (containerId && this.wudContainers.has(containerId)) {
       return this.wudContainers.get(containerId).name;
-    }
+  }
+
+const prefixes = this.config.prefixes
+  .map(p => `${p}_`) // underscore aggiunto qui
+  .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); // escape regex
+
+const prefixRegex = new RegExp(
+  `^update\\.(whats_up_docker_container_|wud_container_)(${prefixes.join('|')})`
+);
 
     return entityId
-      .replace(/^update\.(whats_up_docker_container_|wud_container_)local_/, '')
+        .replace(prefixRegex, '')
       .replace(/_/g, ' ')
       .split(' ')
       .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
@@ -370,7 +414,7 @@ class WudCard extends HTMLElement {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(this.config.wud_api.auth ? { 'Authorization': `Bearer ${this.config.wud_api.auth}` } : {})
+            ...(this._getAuthHeaders())
           },
           body: JSON.stringify(container)  // Sende den kompletten Container
         }
