@@ -59,6 +59,7 @@ class WudCard extends HTMLElement {
     this.lastRenderData = null;
     this.updatingContainers = new Set();
     this._language = 'en';
+    this.wudReachable = false;
   }
 
   setConfig(config) {
@@ -66,7 +67,9 @@ class WudCard extends HTMLElement {
       throw new Error('Invalid configuration');
     }
 
+    // Spread raw config first so explicit defaults below take precedence
     this.config = {
+      ...config,
       title: config.title || null,
       entity_filter: config.entity_filter || ['whats_up_docker', 'wud_container'],
       show_current: config.show_current !== false,
@@ -84,7 +87,6 @@ class WudCard extends HTMLElement {
       custom_icons: config.custom_icons || {},
       update_interval: config.update_interval || 30000,
       prefixes: config.prefixes || ['local'],
-      ...config
     };
 
     this.currentCollapsed = this.config.current_collapsed;
@@ -129,21 +131,17 @@ class WudCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
 
-    // Update language from Home Assistant
     if (hass.language) {
       this._language = hass.language.toLowerCase().startsWith('de') ? 'de' : 'en';
     }
 
     const now = Date.now();
 
-    // Load WUD data based on configured interval
     if (!this.lastWudLoad || (now - this.lastWudLoad) > this.config.update_interval) {
       this.lastWudLoad = now;
       this.loadWudData().then(() => this.render());
-    } else {
-      if (this.hasRelevantChanges(hass)) {
-        this.render();
-      }
+    } else if (this.hasRelevantChanges(hass)) {
+      this.render();
     }
   }
 
@@ -174,14 +172,12 @@ class WudCard extends HTMLElement {
       }));
   }
 
-  getReleaseNotesLink(name, entity) {
+  getReleaseNotesLink(name, entityObj) {
     const map = this.config.release_notes || {};
     const lname = (name || '').toLowerCase();
 
-    // Exact match
     let tpl = map[lname] || map[name];
 
-    // Fuzzy match fallback
     if (!tpl) {
       const keys = Object.keys(map);
       const candidates = keys
@@ -194,12 +190,13 @@ class WudCard extends HTMLElement {
     }
 
     if (!tpl) return null;
-    return this._formatReleaseNotesUrl(tpl, entity, name);
+    return this._formatReleaseNotesUrl(tpl, entityObj, name);
   }
 
-  _formatReleaseNotesUrl(tpl, entity, name) {
-    const installed = entity?.state?.attributes?.installed_version || '';
-    const latest = entity?.state?.attributes?.latest_version || '';
+  _formatReleaseNotesUrl(tpl, entityObj, name) {
+    const attrs = entityObj?.state?.attributes || {};
+    const installed = attrs.installed_version || '';
+    const latest = attrs.latest_version || '';
     const version = latest || installed || '';
     const values = { installed, latest, version, name: name || '' };
 
@@ -210,10 +207,11 @@ class WudCard extends HTMLElement {
   }
 
   async loadWudData() {
-    if (!this.config.wud_api || !this.config.wud_api.show_update_buttons) return;
+    if (!this.config.wud_api?.url || !this.config.wud_api?.show_update_buttons) return;
 
     try {
       const containers = await this.fetchApi('/api/containers');
+      this.wudReachable = true;
       this.wudContainers.clear();
       containers.forEach(c => this.wudContainers.set(c.id, c));
 
@@ -226,32 +224,23 @@ class WudCard extends HTMLElement {
         }
       }));
     } catch (e) {
+      this.wudReachable = false;
       console.warn('WUD API not reachable:', e);
     }
   }
 
-_getAuthHeaders() {
+  _getAuthHeaders() {
+    if (this.config.wud_api.auth) {
+      return { 'Authorization': `Bearer ${this.config.wud_api.auth}` };
+    }
 
- // manage Bearer auth
-   if (this.config.wud_api.auth) {
-	return { 'Authorization': `Bearer ${this.config.wud_api.auth}` }
-   };
+    const { user, password } = this.config.wud_api;
+    if (user && password) {
+      return { 'Authorization': `Basic ${btoa(`${user}:${password}`)}` };
+    }
 
-
- // manage base auth
-  const { user, password } = this.config.wud_api;
-
-  if (user && password) {
-    const token = btoa(`${user}:${password}`);
-    const header = {
-      "Authorization": `Basic ${token}`
-    };
-
-    return header;
+    return {};
   }
-
-  return {};
-}
 
   async fetchApi(path) {
     if (!this.config.wud_api?.url) {
@@ -272,7 +261,7 @@ _getAuthHeaders() {
 
       const response = await fetch(`${this.config.wud_api.url}/api/containers/watch`, {
         method: 'POST',
-      headers: this._getAuthHeaders()
+        headers: this._getAuthHeaders()
       });
 
       if (response.ok) {
@@ -291,64 +280,95 @@ _getAuthHeaders() {
     }
   }
 
+  // Find the WUD API container that corresponds to a given HA entity.
+  // Builds a set of candidate names from HA attributes and entity ID tail,
+  // then does an exact normalized match against WUD container names.
+  // Normalization (lowercase + strip non-alphanumeric) handles differences like
+  // hyphens vs underscores, but never uses substring matching to avoid
+  // "baikal" incorrectly matching "baikaltunnel".
+  _findWudContainer(entityId) {
+    if (!this.wudContainers.size) return null;
 
-  getContainerIdFromEntity(entityId) {
-    const clean = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const haState = this._hass?.states[entityId];
+    const haFriendlyName = haState?.attributes?.friendly_name || '';
+    const haDisplayName = haState?.attributes?.display_name || '';
+    const entityTail = this._extractEntityTail(entityId);
 
+    const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    // Entferne den Präfix ZUERST, bevor wir matchen
-const prefixes = this.config.prefixes
-  .map(p => `${p}_`) // underscore aggiunto qui
-  .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); // escape regex
-
-const prefixRegex = new RegExp(
-  `^update\\.(whats_up_docker_container_|wud_container_)(${prefixes.join('|')})`
-);
-
-const entityName = entityId.replace(prefixRegex, '');
-
-    const entityClean = clean(entityName);
+    const candidates = new Set(
+      [haFriendlyName, haDisplayName, entityTail].map(normalize).filter(Boolean)
+    );
 
     for (const [id, container] of this.wudContainers) {
-      const containerClean = clean(container.name);
-    if (entityClean === containerClean ||
-          entityClean.includes(containerClean) ||
-          containerClean.includes(entityClean)) {
-        return id;
+      const wudName = normalize(container.displayName || container.name || '');
+      if (wudName && candidates.has(wudName)) {
+        return { id, container };
       }
     }
+
     return null;
   }
 
-  getContainerName(entityId) {
-    const containerId = this.getContainerIdFromEntity(entityId);
-    if (containerId && this.wudContainers.has(containerId)) {
-      return this.wudContainers.get(containerId).name;
+  // Strip well-known HA entity ID prefixes to get the bare container name portion.
+  _extractEntityTail(entityId) {
+    // Remove the "update." domain prefix first
+    let tail = entityId.replace(/^update\./, '');
+
+    // Remove WUD integration prefixes (HTTP and MQTT integrations use different patterns)
+    tail = tail.replace(/^(whats_up_docker_container_|wud_container_)/, '');
+
+    // Remove known host/prefix segments configured by the user
+    const prefixes = this.config.prefixes || [];
+    for (const p of prefixes) {
+      const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      tail = tail.replace(new RegExp(`^${escaped}_?`, 'i'), '');
+    }
+
+    return tail;
   }
 
-const prefixes = this.config.prefixes
-  .map(p => `${p}_`) // underscore aggiunto qui
-  .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); // escape regex
+  // Primary name resolution:
+  //   1. friendly_name from HA entity attributes, stripping the WUD integration prefix
+  //      ("Whats Up Docker" / "What's Up Docker") that HA prepends automatically
+  //   2. WUD API container displayName / name
+  //   3. Last resort: humanise the entity ID tail
+  getContainerName(entityId) {
+    const haState = this._hass?.states[entityId];
 
-const prefixRegex = new RegExp(
-  `^update\\.(whats_up_docker_container_|wud_container_)(${prefixes.join('|')})`
-);
+    // 1. Use HA's friendly_name, but strip the integration prefix HA adds automatically.
+    //    e.g. "Whats Up Docker pihole" → "pihole", "Whats Up Docker BaikalTunnel" → "BaikalTunnel"
+    const friendlyName = haState?.attributes?.friendly_name;
+    if (friendlyName) {
+      const stripped = friendlyName.replace(/^what'?s\s+up\s+docker\s+/i, '').trim();
+      if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+    }
 
-    return entityId
-        .replace(prefixRegex, '')
+    // 2. Use WUD API container name if available
+    const found = this._findWudContainer(entityId);
+    if (found) {
+      return found.container.displayName || found.container.name || entityId;
+    }
+
+    // 3. Humanise entity ID tail as last resort
+    const tail = this._extractEntityTail(entityId);
+    if (!tail) return entityId;
+
+    return tail
       .replace(/_/g, ' ')
       .split(' ')
+      .filter(Boolean)
       .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
       .join(' ');
   }
 
   getContainerIcon(name) {
-    const lowerName = name.toLowerCase();
-    for (const [key, icon] of Object.entries(this.config.custom_icons)) {
+    const lowerName = (name || '').toLowerCase();
+
+    for (const [key, icon] of Object.entries(this.config.custom_icons || {})) {
       if (lowerName.includes(key.toLowerCase())) return icon;
     }
 
-    // Default icon mappings
     const iconMap = {
       'mosquitto': 'mdi:message-outline',
       'traefik': 'mdi:router-network',
@@ -357,26 +377,20 @@ const prefixRegex = new RegExp(
     for (const [key, icon] of Object.entries(iconMap)) {
       if (lowerName.includes(key)) return icon;
     }
+
     return 'mdi:docker';
   }
 
   getAvailableTriggers(entityId) {
-    const containerId = this.getContainerIdFromEntity(entityId);
-    if (!containerId || !this.containerTriggers.has(containerId)) {
-      return [];
-    }
+    const found = this._findWudContainer(entityId);
+    if (!found || !this.containerTriggers.has(found.id)) return [];
 
-    const triggers = this.containerTriggers.get(containerId);
+    const triggers = this.containerTriggers.get(found.id);
     const allTriggers = triggers.map(t => ({ id: t.id, name: t.name, type: t.type }));
 
-    // Apply trigger filter
     const filter = this.config.wud_api?.trigger_filter;
+    if (!filter || filter === 'all') return allTriggers;
 
-    if (!filter || filter === 'all') {
-      return allTriggers;
-    }
-
-    // Filter by trigger type(s)
     const filterTypes = Array.isArray(filter) ? filter : [filter];
     return allTriggers.filter(t =>
       filterTypes.some(ft =>
@@ -387,13 +401,13 @@ const prefixRegex = new RegExp(
   }
 
   async triggerUpdate(entityId, triggerId) {
-    const containerId = this.getContainerIdFromEntity(entityId);
-    if (!containerId) {
+    const found = this._findWudContainer(entityId);
+    if (!found) {
       this.showNotification(this.t('container_not_found'), 'error');
       return;
     }
 
-    const container = this.wudContainers.get(containerId);
+    const { id: containerId } = found;
     const triggers = this.containerTriggers.get(containerId) || [];
     const trigger = triggers.find(t => t.id === triggerId);
 
@@ -406,22 +420,19 @@ const prefixRegex = new RegExp(
     this.render();
 
     try {
-      this.showNotification(`${this.t('update_started')} ${this.getContainerName(entityId)}...`, 'info');
+      const name = this.getContainerName(entityId);
+      this.showNotification(`${this.t('update_started')} ${name}...`, 'info');
 
       const response = await fetch(
-        `${this.config.wud_api.url}/api/triggers/${encodeURIComponent(trigger.type)}/${encodeURIComponent(trigger.name)}`,
+        `${this.config.wud_api.url}/api/containers/${encodeURIComponent(containerId)}/triggers/${encodeURIComponent(trigger.type)}/${encodeURIComponent(trigger.name)}`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(this._getAuthHeaders())
-          },
-          body: JSON.stringify(container)  // Sende den kompletten Container
+          headers: this._getAuthHeaders()
         }
       );
 
       if (response.ok) {
-        this.showNotification(`${this.t('update_triggered')} ${this.getContainerName(entityId)}`, 'success');
+        this.showNotification(`${this.t('update_triggered')} ${name}`, 'success');
         this.closeAllMenus();
       } else {
         const error = await response.text();
@@ -814,7 +825,7 @@ const prefixRegex = new RegExp(
         <div class="header-content">
           ${displayTitle}
           ${this.config.wud_api?.show_update_buttons ? `
-            <div class="wud-status">${this.wudContainers.size > 0 ? `🟢 ${this.t('wud_connected')}` : `🔴 ${this.t('wud_disconnected')}`}</div>
+            <div class="wud-status">${this.wudReachable ? `🟢 ${this.t('wud_connected')}` : `🔴 ${this.t('wud_disconnected')}`}</div>
           ` : ''}
         </div>
         ${this.config.wud_api?.show_update_buttons ? `
@@ -884,7 +895,7 @@ const prefixRegex = new RegExp(
                       </button>
                       <div class="trigger-menu" id="menu-${i}">
                         ${e.triggers.map(t => `
-                          <div class="trigger-item ${e.isUpdating ? 'disabled' : ''}"
+                          <div class="trigger-item"
                                data-action="update"
                                data-entity-id="${e.entityId}"
                                data-trigger-id="${t.id}"
