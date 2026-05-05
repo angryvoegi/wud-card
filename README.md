@@ -9,11 +9,12 @@ A custom Lovelace card for Home Assistant that displays Docker container updates
 - Display available container updates from Home Assistant update entities
 - Works with both **MQTT** and **HTTP** WUD integrations
 - Trigger container updates via WUD API
+- Skip updates to defer them to a separate collapsible section
 - Container names resolved from HA `friendly_name`
 - Multi-language support (English, German)
 - Customizable icons per container
 - Release notes links with template support
-- Collapsible up-to-date section
+- Collapsible up-to-date and skipped sections
 - Responsive design for mobile devices
 
 ## Screenshots
@@ -73,6 +74,7 @@ prefixes:
 show_current: true
 show_available_updates: true
 current_collapsed: true
+enable_skip: true
 update_interval: 30000
 wud_api:
   url: http://your-wud-instance:3000
@@ -101,6 +103,7 @@ custom_icons:
 | `show_current`                | boolean         | `true`                                     | Show up-to-date containers                                         |
 | `show_available_updates`      | boolean         | `true`                                     | Show containers with available updates                             |
 | `current_collapsed`           | boolean         | `true`                                     | Initially collapse the up-to-date section                          |
+| `enable_skip`                 | boolean         | `false`                                    | Show a Skip button on each pending update (see below)              |
 | `update_interval`             | number          | `30000`                                    | Interval in ms to refresh WUD API data                             |
 | `wud_api.url`                 | string          | —                                          | URL of your WUD instance                                           |
 | `wud_api.show_update_buttons` | boolean         | `true`                                     | Show update trigger buttons                                        |
@@ -110,6 +113,23 @@ custom_icons:
 | `wud_api.trigger_filter`      | string or array | `all`                                      | Limit triggers by type or name, e.g. `dockercompose`, `mqtt`       |
 | `release_notes`               | object          | `{}`                                       | Template URLs for release notes (see below)                        |
 | `custom_icons`                | object          | `{}`                                       | Custom MDI icons per container name                                |
+
+### Skip Updates
+
+Enable the skip feature with `enable_skip: true`. A **Skip** button then appears below the Update button on every pending update (same size, column layout — no change in row height).
+
+```yaml
+type: custom:wud-card
+enable_skip: true
+```
+
+**How it works:**
+
+- **Skip** — moves the container out of *Updates Available* into a collapsible **Skipped Updates** section
+- **Unskip** — moves it back to *Updates Available* without triggering an update
+- **Update** (from the skipped section) — triggers the update and automatically unskips the container
+
+The skipped state is stored in `localStorage` and persists across page reloads. The summary row shows a separate chip with the number of skipped containers.
 
 ### Authentication
 

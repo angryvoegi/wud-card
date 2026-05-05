@@ -7,8 +7,10 @@ const TRANSLATIONS = {
     check_updates: 'Check for Updates',
     updates_available: 'update(s) available',
     up_to_date: 'up-to-date',
+    skipped: 'skipped',
     update_available_section: 'Updates Available',
     current_section: 'Up-to-Date',
+    skipped_section: 'Skipped Updates',
     update: 'Update',
     updating: 'Updating...',
     no_trigger: 'No Trigger',
@@ -21,7 +23,9 @@ const TRANSLATIONS = {
     update_failed: 'Update failed',
     container_not_found: 'Container not found',
     trigger_not_found: 'Trigger not found',
-    no_containers: 'No containers found'
+    no_containers: 'No containers found',
+    skip: 'Skip',
+    unskip: 'Unskip'
   },
   de: {
     title: 'Docker Container Updates',
@@ -30,8 +34,10 @@ const TRANSLATIONS = {
     check_updates: 'Überprüfen',
     updates_available: 'Update(s) verfügbar',
     up_to_date: 'aktuell',
+    skipped: 'übersprungen',
     update_available_section: 'Updates verfügbar',
     current_section: 'Aktuell',
+    skipped_section: 'Übersprungene Updates',
     update: 'Update',
     updating: 'Läuft...',
     no_trigger: 'Kein Trigger',
@@ -44,7 +50,9 @@ const TRANSLATIONS = {
     update_failed: 'Update fehlgeschlagen',
     container_not_found: 'Container nicht gefunden',
     trigger_not_found: 'Trigger nicht gefunden',
-    no_containers: 'Keine Container gefunden'
+    no_containers: 'Keine Container gefunden',
+    skip: 'Überspringen',
+    unskip: 'Wiederherstellen'
   }
 };
 
@@ -56,10 +64,25 @@ class WudCard extends HTMLElement {
     this.containerTriggers = new Map();
     this.lastWudLoad = 0;
     this.currentCollapsed = true;
+    this.skippedCollapsed = true;
     this.lastRenderData = null;
     this.updatingContainers = new Set();
     this._language = 'en';
     this.wudReachable = false;
+    this.skippedUpdates = new Set(this._loadSkipped());
+  }
+
+  _loadSkipped() {
+    try {
+      const data = localStorage.getItem('wud-card-skipped');
+      return data ? JSON.parse(data) : [];
+    } catch { return []; }
+  }
+
+  _saveSkipped() {
+    try {
+      localStorage.setItem('wud-card-skipped', JSON.stringify([...this.skippedUpdates]));
+    } catch {}
   }
 
   setConfig(config) {
@@ -75,6 +98,7 @@ class WudCard extends HTMLElement {
       show_current: config.show_current !== false,
       show_available_updates: config.show_available_updates !== false,
       current_collapsed: config.current_collapsed !== false,
+      enable_skip: config.enable_skip === true,
       wud_api: config.wud_api ? {
         url: config.wud_api.url,
         auth: config.wud_api.auth || null,
@@ -106,10 +130,15 @@ class WudCard extends HTMLElement {
 
       if (action === 'check-updates') this.checkForUpdates();
       else if (action === 'update') this.triggerUpdate(entityId, triggerId);
+      else if (action === 'skip') this.skipUpdate(entityId);
+      else if (action === 'unskip') this.unskipUpdate(entityId);
       else if (action === 'toggle-menu') this.toggleMenu(index);
       else if (action === 'show-more') this.showMoreInfo(entityId);
       else if (action === 'toggle-current') {
         this.currentCollapsed = !this.currentCollapsed;
+        this.render();
+      } else if (action === 'toggle-skipped') {
+        this.skippedCollapsed = !this.skippedCollapsed;
         this.render();
       }
     });
@@ -126,6 +155,18 @@ class WudCard extends HTMLElement {
     if (this._onDocClick) {
       document.removeEventListener('click', this._onDocClick);
     }
+  }
+
+  skipUpdate(entityId) {
+    this.skippedUpdates.add(entityId);
+    this._saveSkipped();
+    this.render();
+  }
+
+  unskipUpdate(entityId) {
+    this.skippedUpdates.delete(entityId);
+    this._saveSkipped();
+    this.render();
   }
 
   set hass(hass) {
@@ -433,6 +474,11 @@ class WudCard extends HTMLElement {
 
       if (response.ok) {
         this.showNotification(`${this.t('update_triggered')} ${name}`, 'success');
+        // Auto-unskip when update is triggered from skipped list
+        if (this.skippedUpdates.has(entityId)) {
+          this.skippedUpdates.delete(entityId);
+          this._saveSkipped();
+        }
         this.closeAllMenus();
       } else {
         const error = await response.text();
@@ -488,6 +534,51 @@ class WudCard extends HTMLElement {
     return filters.some(filter => entityId.includes(filter));
   }
 
+  _renderUpdateButton(e, i) {
+    if (!this.config.wud_api?.show_update_buttons) return '';
+
+    if (e.triggers.length === 1) {
+      return `
+        <button class="btn ${e.isUpdating ? 'updating' : ''}"
+                data-action="update"
+                data-entity-id="${e.entityId}"
+                data-trigger-id="${e.triggers[0].id}"
+                ${e.isUpdating ? 'disabled' : ''}>
+          ${e.isUpdating ? '<div class="spinner"></div>' : ''}
+          ${e.isUpdating ? this.t('updating') : this.t('update')}
+        </button>
+      `;
+    }
+
+    if (e.triggers.length > 1) {
+      return `
+        <div class="dropdown">
+          <button class="btn ${e.isUpdating ? 'updating' : ''}"
+                  data-action="toggle-menu"
+                  data-index="${i}"
+                  ${e.isUpdating ? 'disabled' : ''}>
+            ${e.isUpdating ? '<div class="spinner"></div>' : ''}
+            ${e.isUpdating ? this.t('updating') : `${this.t('update')} ▼`}
+          </button>
+          <div class="trigger-menu" id="menu-${i}">
+            ${e.triggers.map(t => `
+              <div class="trigger-item"
+                   data-action="update"
+                   data-entity-id="${e.entityId}"
+                   data-trigger-id="${t.id}"
+                   style="${e.isUpdating ? 'pointer-events: none; opacity: 0.5;' : ''}">
+                ${e.isUpdating ? '<div class="spinner"></div>' : ''}
+                ${t.name} (${t.type})
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    return `<button class="btn" disabled>${this.t('no_trigger')}</button>`;
+  }
+
   render() {
     if (!this._hass) return;
 
@@ -503,7 +594,11 @@ class WudCard extends HTMLElement {
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    const updates = entities.filter(e => e.state.state === 'on');
+    const allUpdates = entities.filter(e => e.state.state === 'on');
+    const skipped = this.config.enable_skip
+      ? allUpdates.filter(e => this.skippedUpdates.has(e.entityId))
+      : [];
+    const updates = allUpdates.filter(e => !this.skippedUpdates.has(e.entityId));
     const current = entities.filter(e => e.state.state === 'off');
 
     const displayTitle = this.config.title || this.t('title');
@@ -585,6 +680,12 @@ class WudCard extends HTMLElement {
           border: 1px solid rgba(76,175,80,0.3);
         }
 
+        .chip.skipped {
+          background: rgba(158,158,158,0.1);
+          color: var(--secondary-text-color, #9e9e9e);
+          border: 1px solid rgba(158,158,158,0.3);
+        }
+
         .section-title {
           font-weight: 500;
           margin: 12px 0 8px;
@@ -644,6 +745,10 @@ class WudCard extends HTMLElement {
           color: var(--success-color, #4caf50);
         }
 
+        .icon.skipped {
+          color: var(--secondary-text-color, #9e9e9e);
+        }
+
         .info {
           flex: 1;
           cursor: pointer;
@@ -677,6 +782,13 @@ class WudCard extends HTMLElement {
           align-items: center;
         }
 
+        .action-col {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          align-items: stretch;
+        }
+
         .btn {
           background: var(--warning-color, #ff9800);
           color: white;
@@ -690,6 +802,7 @@ class WudCard extends HTMLElement {
           white-space: nowrap;
           display: flex;
           align-items: center;
+          justify-content: center;
           gap: 6px;
         }
 
@@ -705,6 +818,22 @@ class WudCard extends HTMLElement {
         .btn.updating {
           background: var(--primary-color);
           cursor: not-allowed;
+        }
+
+        .btn.btn-skip {
+          background: var(--secondary-text-color, #9e9e9e);
+        }
+
+        .btn.btn-skip:hover {
+          background: #757575;
+        }
+
+        .btn.btn-unskip {
+          background: var(--info-color, #2196f3);
+        }
+
+        .btn.btn-unskip:hover {
+          background: #1976d2;
         }
 
         .check-btn {
@@ -841,6 +970,12 @@ class WudCard extends HTMLElement {
               ${updates.length} ${this.t('updates_available')}
             </div>
           ` : ''}
+          ${skipped.length > 0 ? `
+            <div class="chip skipped">
+              <ha-icon icon="mdi:skip-next"></ha-icon>
+              ${skipped.length} ${this.t('skipped')}
+            </div>
+          ` : ''}
           ${current.length > 0 ? `
             <div class="chip current">
               <ha-icon icon="mdi:check-circle"></ha-icon>
@@ -873,46 +1008,65 @@ class WudCard extends HTMLElement {
                   ` : '';
                 })()}
               </div>
-              ${this.config.wud_api?.show_update_buttons ? `
+              ${(this.config.wud_api?.show_update_buttons || this.config.enable_skip) ? `
                 <div class="actions">
-                  ${e.triggers.length === 1 ? `
-                    <button class="btn ${e.isUpdating ? 'updating' : ''}"
-                            data-action="update"
-                            data-entity-id="${e.entityId}"
-                            data-trigger-id="${e.triggers[0].id}"
-                            ${e.isUpdating ? 'disabled' : ''}>
-                      ${e.isUpdating ? '<div class="spinner"></div>' : ''}
-                      ${e.isUpdating ? this.t('updating') : this.t('update')}
-                    </button>
-                  ` : e.triggers.length > 1 ? `
-                    <div class="dropdown">
-                      <button class="btn ${e.isUpdating ? 'updating' : ''}"
-                              data-action="toggle-menu"
-                              data-index="${i}"
-                              ${e.isUpdating ? 'disabled' : ''}>
-                        ${e.isUpdating ? '<div class="spinner"></div>' : ''}
-                        ${e.isUpdating ? this.t('updating') : `${this.t('update')} ▼`}
+                  <div class="action-col">
+                    ${this._renderUpdateButton(e, i)}
+                    ${this.config.enable_skip ? `
+                      <button class="btn btn-skip"
+                              data-action="skip"
+                              data-entity-id="${e.entityId}">
+                        ${this.t('skip')}
                       </button>
-                      <div class="trigger-menu" id="menu-${i}">
-                        ${e.triggers.map(t => `
-                          <div class="trigger-item"
-                               data-action="update"
-                               data-entity-id="${e.entityId}"
-                               data-trigger-id="${t.id}"
-                               style="${e.isUpdating ? 'pointer-events: none; opacity: 0.5;' : ''}">
-                            ${e.isUpdating ? '<div class="spinner"></div>' : ''}
-                            ${t.name} (${t.type})
-                          </div>
-                        `).join('')}
-                      </div>
-                    </div>
-                  ` : `
-                    <button class="btn" disabled>${this.t('no_trigger')}</button>
-                  `}
+                    ` : ''}
+                  </div>
                 </div>
               ` : ''}
             </div>
           `).join('')}
+        ` : ''}
+
+        ${this.config.enable_skip && skipped.length > 0 ? `
+          <div class="section-title" data-action="toggle-skipped">
+            <span class="toggle-icon ${this.skippedCollapsed ? 'collapsed' : ''}">▼</span>
+            ⏭ ${this.t('skipped_section')} (${skipped.length})
+          </div>
+          <div class="${this.skippedCollapsed ? 'collapsed' : ''}">
+            ${skipped.map((e, i) => `
+              <div class="item">
+                <ha-icon class="icon skipped" icon="${e.icon}"></ha-icon>
+                <div class="info" data-action="show-more" data-entity-id="${e.entityId}">
+                  <div class="name">${e.name}</div>
+                  <div class="status">${e.isUpdating ? this.t('updating') : this.t('skipped_section')}</div>
+                  ${e.state.attributes.installed_version ? `
+                    <div class="version">
+                      ${e.state.attributes.installed_version} → ${e.state.attributes.latest_version || 'latest'}
+                    </div>
+                  ` : ''}
+                  ${(() => {
+                    const link = this.getReleaseNotesLink(e.name, e);
+                    return link ? `
+                      <div class="release-notes">
+                        <a href="${link}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">
+                          📄 ${this.t('release_notes')}
+                        </a>
+                      </div>
+                    ` : '';
+                  })()}
+                </div>
+                <div class="actions">
+                  <div class="action-col">
+                    ${this._renderUpdateButton(e, 'skipped-' + i)}
+                    <button class="btn btn-unskip"
+                            data-action="unskip"
+                            data-entity-id="${e.entityId}">
+                      ${this.t('unskip')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
         ` : ''}
 
         ${this.config.show_current && current.length > 0 ? `
@@ -948,6 +1102,7 @@ class WudCard extends HTMLElement {
       show_current: true,
       show_available_updates: true,
       current_collapsed: true,
+      enable_skip: false,
       update_interval: 30000,
       wud_api: {
         url: 'http://your-wud-instance:3000',
