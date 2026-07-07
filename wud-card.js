@@ -251,14 +251,16 @@ class WudCard extends HTMLElement {
     if (!this.config.wud_api?.url || !this.config.wud_api?.show_update_buttons) return;
 
     try {
-      const containers = await this.fetchApi('/api/containers');
+      const containersResponse = await this.fetchApi('/api/containers');
+      const containers = Array.isArray(containersResponse) ? containersResponse : containersResponse.data;
       this.wudReachable = true;
       this.wudContainers.clear();
       containers.forEach(c => this.wudContainers.set(c.id, c));
 
       await Promise.all(containers.map(async (c) => {
         try {
-          const triggers = await this.fetchApi(`/api/containers/${encodeURIComponent(c.id)}/triggers`);
+          const triggersResponse = await this.fetchApi(`/api/containers/${encodeURIComponent(c.id)}/triggers`);
+          const triggers = Array.isArray(triggersResponse) ? triggersResponse : triggersResponse.data;
           this.containerTriggers.set(c.id, triggers);
         } catch (e) {
           console.warn(`Failed to load triggers for ${c.id}:`, e);
