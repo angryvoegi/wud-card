@@ -251,16 +251,17 @@ class WudCard extends HTMLElement {
     if (!this.config.wud_api?.url || !this.config.wud_api?.show_update_buttons) return;
 
     try {
-      const containersResponse = await this.fetchApi('/api/containers');
-      const containers = Array.isArray(containersResponse) ? containersResponse : containersResponse.data;
+      const containers = this._unwrapCollection(await this.fetchApi('/api/containers'));
       this.wudReachable = true;
       this.wudContainers.clear();
+      this.containerTriggers.clear();
       containers.forEach(c => this.wudContainers.set(c.id, c));
 
       await Promise.all(containers.map(async (c) => {
         try {
-          const triggersResponse = await this.fetchApi(`/api/containers/${encodeURIComponent(c.id)}/triggers`);
-          const triggers = Array.isArray(triggersResponse) ? triggersResponse : triggersResponse.data;
+          const triggers = this._unwrapCollection(
+            await this.fetchApi(`/api/containers/${encodeURIComponent(c.id)}/triggers`)
+          );
           this.containerTriggers.set(c.id, triggers);
         } catch (e) {
           console.warn(`Failed to load triggers for ${c.id}:`, e);
@@ -270,6 +271,12 @@ class WudCard extends HTMLElement {
       this.wudReachable = false;
       console.warn('WUD API not reachable:', e);
     }
+  }
+
+  _unwrapCollection(response) {
+    if (Array.isArray(response)) return response;
+    if (Array.isArray(response?.data)) return response.data;
+    return [];
   }
 
   _getAuthHeaders() {
@@ -332,6 +339,12 @@ class WudCard extends HTMLElement {
   _findWudContainer(entityId) {
     if (!this.wudContainers.size) return null;
 
+    if (entityId.startsWith('wud_api.')) {
+      const id = decodeURIComponent(entityId.slice('wud_api.'.length));
+      const container = this.wudContainers.get(id);
+      if (container) return { id, container };
+    }
+
     const haState = this._hass?.states[entityId];
     const haFriendlyName = haState?.attributes?.friendly_name || '';
     const haDisplayName = haState?.attributes?.display_name || '';
@@ -344,13 +357,35 @@ class WudCard extends HTMLElement {
     );
 
     for (const [id, container] of this.wudContainers) {
-      const wudName = normalize(container.displayName || container.name || '');
-      if (wudName && candidates.has(wudName)) {
+      const wudCandidates = this._getContainerMatchCandidates(container).map(normalize).filter(Boolean);
+      if (wudCandidates.some(candidate => candidates.has(candidate))) {
         return { id, container };
       }
     }
 
     return null;
+  }
+
+  _getContainerMatchCandidates(container) {
+    const values = [
+      container.id,
+      container.name,
+      container.displayName,
+      container.identityKey,
+      container.image?.name,
+      container.labels?.['com.docker.compose.service'],
+      container.labels?.['org.opencontainers.image.title'],
+    ];
+
+    if (container.identityKey) {
+      values.push(...container.identityKey.split('::'));
+    }
+
+    if (container.image?.name) {
+      values.push(container.image.name.split('/').pop());
+    }
+
+    return values.filter(Boolean);
   }
 
   // Strip well-known HA entity ID prefixes to get the bare container name portion.
@@ -377,6 +412,11 @@ class WudCard extends HTMLElement {
   //   2. WUD API container displayName / name
   //   3. Last resort: humanise the entity ID tail
   getContainerName(entityId) {
+    if (entityId.startsWith('wud_api.')) {
+      const found = this._findWudContainer(entityId);
+      if (found) return found.container.displayName || found.container.name || found.id;
+    }
+
     const haState = this._hass?.states[entityId];
 
     // 1. Use HA's friendly_name, but strip the integration prefix HA adds automatically.
@@ -466,13 +506,18 @@ class WudCard extends HTMLElement {
       const name = this.getContainerName(entityId);
       this.showNotification(`${this.t('update_started')} ${name}...`, 'info');
 
-      const response = await fetch(
-        `${this.config.wud_api.url}/api/containers/${encodeURIComponent(containerId)}/triggers/${encodeURIComponent(trigger.type)}/${encodeURIComponent(trigger.name)}`,
-        {
-          method: 'POST',
-          headers: this._getAuthHeaders()
-        }
-      );
+      const triggerPath = [
+        '/api/containers',
+        encodeURIComponent(containerId),
+        'triggers',
+        encodeURIComponent(trigger.type),
+        encodeURIComponent(trigger.name),
+        ...(trigger.agent ? [encodeURIComponent(trigger.agent)] : []),
+      ].join('/');
+      const response = await fetch(`${this.config.wud_api.url}${triggerPath}`, {
+        method: 'POST',
+        headers: this._getAuthHeaders()
+      });
 
       if (response.ok) {
         this.showNotification(`${this.t('update_triggered')} ${name}`, 'success');
@@ -581,10 +626,28 @@ class WudCard extends HTMLElement {
     return `<button class="btn" disabled>${this.t('no_trigger')}</button>`;
   }
 
+  _getApiContainerEntities() {
+    return [...this.wudContainers.entries()].map(([id, container]) => ({
+      entityId: `wud_api.${encodeURIComponent(id)}`,
+      state: {
+        state: container.updateAvailable ? 'on' : 'off',
+        attributes: {
+          friendly_name: container.displayName || container.name || id,
+          installed_version: container.image?.tag?.value || '',
+          latest_version: container.result?.tag || container.result?.suggestedTag || ''
+        }
+      },
+      name: container.displayName || container.name || id,
+      icon: this.getContainerIcon(container.displayName || container.name || id),
+      triggers: this.containerTriggers.get(id) || [],
+      isUpdating: this.updatingContainers.has(`wud_api.${encodeURIComponent(id)}`)
+    }));
+  }
+
   render() {
     if (!this._hass) return;
 
-    const entities = Object.keys(this._hass.states)
+    const hassEntities = Object.keys(this._hass.states)
       .filter(id => id.startsWith('update.') && this.matchesFilter(id))
       .map(id => ({
         entityId: id,
@@ -595,6 +658,7 @@ class WudCard extends HTMLElement {
         isUpdating: this.updatingContainers.has(id)
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
+    const entities = hassEntities.length ? hassEntities : this._getApiContainerEntities();
 
     const allUpdates = entities.filter(e => e.state.state === 'on');
     const skipped = this.config.enable_skip
