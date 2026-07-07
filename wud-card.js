@@ -105,6 +105,7 @@ class WudCard extends HTMLElement {
         user: config.wud_api.user || null,
         password: config.wud_api.password || null,
         show_update_buttons: config.wud_api.show_update_buttons !== false,
+        api_path: config.wud_api.api_path || null,
         trigger_filter: config.wud_api.trigger_filter || 'all'
       } : null,
       release_notes: config.release_notes || {},
@@ -251,7 +252,7 @@ class WudCard extends HTMLElement {
     if (!this.config.wud_api?.url || !this.config.wud_api?.show_update_buttons) return;
 
     try {
-      const containers = this._unwrapCollection(await this.fetchApi('/api/containers'));
+      const containers = this._unwrapCollection(await this.fetchApi('/containers'));
       this.wudReachable = true;
       this.wudContainers.clear();
       this.containerTriggers.clear();
@@ -260,7 +261,7 @@ class WudCard extends HTMLElement {
       await Promise.all(containers.map(async (c) => {
         try {
           const triggers = this._unwrapCollection(
-            await this.fetchApi(`/api/containers/${encodeURIComponent(c.id)}/triggers`)
+            await this.fetchApi(`/containers/${encodeURIComponent(c.id)}/triggers`)
           );
           this.containerTriggers.set(c.id, triggers);
         } catch (e) {
@@ -297,22 +298,43 @@ class WudCard extends HTMLElement {
       throw new Error('WUD API URL not configured');
     }
 
-    const response = await fetch(`${this.config.wud_api.url}${path}`, {
-      headers: this._getAuthHeaders()
-    });
-
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const response = await this._fetchApiResponse(path);
     return response.json();
+  }
+
+  _getApiPaths() {
+    const configuredPath = this.config.wud_api?.api_path;
+    if (configuredPath) {
+      const normalized = configuredPath.startsWith('/')
+        ? configuredPath.replace(/\/$/, '')
+        : `/${configuredPath.replace(/\/$/, '')}`;
+      return [normalized];
+    }
+    return ['/api/v1', '/api'];
+  }
+
+  async _fetchApiResponse(path, options = {}) {
+    let lastResponse = null;
+    const headers = { ...this._getAuthHeaders(), ...(options.headers || {}) };
+
+    for (const apiPath of this._getApiPaths()) {
+      const response = await fetch(`${this.config.wud_api.url}${apiPath}${path}`, {
+        ...options,
+        headers
+      });
+      if (response.ok) return response;
+      lastResponse = response;
+      if (this.config.wud_api?.api_path || response.status !== 404) break;
+    }
+
+    throw new Error(`HTTP ${lastResponse?.status || 'unknown'}`);
   }
 
   async checkForUpdates() {
     try {
       this.showNotification(this.t('checking_updates'), 'info');
 
-      const response = await fetch(`${this.config.wud_api.url}/api/containers/watch`, {
-        method: 'POST',
-        headers: this._getAuthHeaders()
-      });
+      const response = await this._fetchApiResponse('/containers/watch', { method: 'POST' });
 
       if (response.ok) {
         this.showNotification(this.t('check_started'), 'success');
@@ -507,17 +529,14 @@ class WudCard extends HTMLElement {
       this.showNotification(`${this.t('update_started')} ${name}...`, 'info');
 
       const triggerPath = [
-        '/api/containers',
+        '/containers',
         encodeURIComponent(containerId),
         'triggers',
         encodeURIComponent(trigger.type),
         encodeURIComponent(trigger.name),
         ...(trigger.agent ? [encodeURIComponent(trigger.agent)] : []),
       ].join('/');
-      const response = await fetch(`${this.config.wud_api.url}${triggerPath}`, {
-        method: 'POST',
-        headers: this._getAuthHeaders()
-      });
+      const response = await this._fetchApiResponse(triggerPath, { method: 'POST' });
 
       if (response.ok) {
         this.showNotification(`${this.t('update_triggered')} ${name}`, 'success');
