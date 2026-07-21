@@ -78,6 +78,7 @@ enable_skip: true
 update_interval: 30000
 wud_api:
   url: http://your-wud-instance:3000
+  api_path: /api/v1                    # Optional; auto-detects /api/v1 then /api when omitted
   show_update_buttons: true
   auth: your_bearer_token_here         # Bearer token (takes priority)
   user: your_username                  # Basic auth (used if auth is not set)
@@ -106,6 +107,7 @@ custom_icons:
 | `enable_skip`                 | boolean         | `false`                                    | Show a Skip button on each pending update (see below)              |
 | `update_interval`             | number          | `30000`                                    | Interval in ms to refresh WUD API data                             |
 | `wud_api.url`                 | string          | —                                          | URL of your WUD instance                                           |
+| `wud_api.api_path`            | string          | Auto (`/api/v1`, then `/api`)              | API base path override (`/api` for legacy WUD servers)             |
 | `wud_api.show_update_buttons` | boolean         | `true`                                     | Show update trigger buttons                                        |
 | `wud_api.auth`                | string          | —                                          | Bearer token for WUD API authentication                            |
 | `wud_api.user`                | string          | —                                          | Username for WUD Basic authentication                              |
