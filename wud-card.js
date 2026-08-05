@@ -442,10 +442,10 @@ class WudCard extends HTMLElement {
     const haState = this._hass?.states[entityId];
 
     // 1. Use HA's friendly_name, but strip the integration prefix HA adds automatically.
-    //    e.g. "Whats Up Docker pihole" → "pihole", "Whats Up Docker BaikalTunnel" → "BaikalTunnel"
+    //    e.g. "Whats Up Docker pihole" → "pihole", "Whats Up Docker BaikalTunnel" → "BaikalTunnel", "wud piper" → "Piper"
     const friendlyName = haState?.attributes?.friendly_name;
     if (friendlyName) {
-      const stripped = friendlyName.replace(/^what'?s\s+up\s+docker\s+/i, '').trim();
+      const stripped = friendlyName.replace(/^(?:what'?s\s+up\s+docker\s+|wud\s+)/i, '').trim();
       if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1);
     }
 
