@@ -17,7 +17,7 @@ Display and manage Docker container updates directly from your Home Assistant da
 ## Quick Start
 
 ```yaml
-type: custom:docker-updates-card
+type: custom:wud-card
 wud_api:
   url: http://your-wud-instance:3000
 ```

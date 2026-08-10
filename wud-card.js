@@ -112,6 +112,8 @@ class WudCard extends HTMLElement {
       custom_icons: config.custom_icons || {},
       update_interval: config.update_interval || 30000,
       prefixes: config.prefixes || ['local'],
+      container_name_transform: config.container_name_transform || 'auto',
+      name_replacements: Array.isArray(config.name_replacements) ? config.name_replacements : [],
     };
 
     this.currentCollapsed = this.config.current_collapsed;
@@ -428,12 +430,53 @@ class WudCard extends HTMLElement {
     return tail;
   }
 
+  // Public entry point for name resolution. Resolves the raw name (see
+  // _resolveRawName) and then applies the configured container_name_transform.
+  getContainerName(entityId) {
+    const mode = this.config.container_name_transform || 'auto';
+    const raw = this._resolveRawName(entityId, mode);
+    return this._applyNameTransform(raw, mode);
+  }
+
+  // Apply user-configured rewriting on top of the resolved name.
+  //   auto   → resolved name unchanged (default)
+  //   raw    → resolved name unchanged; stripping/capitalisation already skipped upstream
+  //   custom → run every name_replacements rule in order
+  // Replacements are case-insensitive so a rule written as `wud ` also matches
+  // an already-capitalised "Wud ". A rule that would blank the name is ignored.
+  _applyNameTransform(name, mode) {
+    if (mode !== 'custom') return name;
+
+    let out = name;
+    for (const rule of this.config.name_replacements || []) {
+      if (!rule || !rule.from) continue;
+      const to = rule.to ?? '';
+      try {
+        const pattern = rule.fromIsRegex
+          ? rule.from
+          : rule.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        out = out.replace(new RegExp(pattern, 'gi'), to);
+      } catch (e) {
+        console.warn(`wud-card: invalid name_replacements rule "${rule.from}":`, e);
+      }
+    }
+
+    out = out.trim();
+    if (!out) return name;
+
+    // Re-apply the leading capital the resolver would have produced, so a rule
+    // that strips a prefix ("wud mariadb" → "mariadb") still renders as "Mariadb".
+    return out.charAt(0).toUpperCase() + out.slice(1);
+  }
+
   // Primary name resolution:
   //   1. friendly_name from HA entity attributes, stripping the WUD integration prefix
   //      ("Whats Up Docker" / "What's Up Docker") that HA prepends automatically
   //   2. WUD API container displayName / name
   //   3. Last resort: humanise the entity ID tail
-  getContainerName(entityId) {
+  // In "raw" mode step 1 returns friendly_name verbatim — no prefix stripping,
+  // no capitalisation — so the value HA delivers can be rewritten as-is.
+  _resolveRawName(entityId, mode) {
     if (entityId.startsWith('wud_api.')) {
       const found = this._findWudContainer(entityId);
       if (found) return found.container.displayName || found.container.name || found.id;
@@ -445,6 +488,7 @@ class WudCard extends HTMLElement {
     //    e.g. "Whats Up Docker pihole" → "pihole", "Whats Up Docker BaikalTunnel" → "BaikalTunnel"
     const friendlyName = haState?.attributes?.friendly_name;
     if (friendlyName) {
+      if (mode === 'raw') return friendlyName;
       const stripped = friendlyName.replace(/^what'?s\s+up\s+docker\s+/i, '').trim();
       if (stripped) return stripped.charAt(0).toUpperCase() + stripped.slice(1);
     }
