@@ -1,6 +1,6 @@
 # What's up Docker Card for Home Assistant
 
-A custom Lovelace card for Home Assistant that displays Docker container updates and integrates with [What's Up Docker (WUD)](https://github.com/fmartinou/whats-up-docker) and its successor [Drydock](https://github.com/getwud/wud) to trigger updates directly from the UI.
+A custom Lovelace card for Home Assistant that displays Docker container updates and integrates with [What's Up Docker (WUD)](https://github.com/getwud/wud) and compatible forks such as [Drydock](https://github.com/CodesWhat/drydock) to trigger updates directly from the UI.
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
 
